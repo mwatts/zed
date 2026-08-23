@@ -766,6 +766,27 @@ impl VisualTestContext {
         self.cx.background_executor.run_until_parked();
     }
 
+    /// Activate the accessibility tree for this test window and render it.
+    pub fn activate_accessibility(&mut self) {
+        self.update(|window, _| {
+            window.a11y.set_active_for_test(true);
+            window.refresh();
+        });
+        self.run_until_parked();
+    }
+
+    /// Resolve the AccessKit node with the given author-provided accessibility id.
+    pub fn accessibility_node_id(&mut self, author_id: &str) -> Option<accesskit::NodeId> {
+        self.update(|window, _| window.a11y.node_id_for_author_id(author_id))
+    }
+
+    /// Submit an accessibility action through the same path used by the platform adapter.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn simulate_accessibility_action(&mut self, request: accesskit::ActionRequest) {
+        self.update(|window, cx| window.handle_a11y_action(request, cx));
+        self.run_until_parked();
+    }
+
     /// Dispatch the action to the currently focused node.
     pub fn dispatch_action<A>(&mut self, action: A)
     where
@@ -1143,12 +1164,54 @@ impl AnyWindowHandle {
 #[cfg(test)]
 mod tests {
     use crate::{
-        PathPromptOptions, SystemNotification, SystemNotificationAction,
-        SystemNotificationResponse, TestAppContext,
+        Context, InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions,
+        Render, StatefulInteractiveElement as _, SystemNotification, SystemNotificationAction,
+        SystemNotificationResponse, TestAppContext, VisualTestContext, Window, div,
     };
-    use std::cell::RefCell;
+    use accesskit::{Action as AccessibilityAction, ActionRequest, Role, TreeId};
+    use std::cell::{Cell, RefCell};
     use std::path::PathBuf;
     use std::rc::Rc;
+
+    struct AccessibleButton {
+        click_count: Rc<Cell<usize>>,
+    }
+
+    impl Render for AccessibleButton {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let click_count = self.click_count.clone();
+            div()
+                .id("accessible-button")
+                .accessibility_id("test.accessible-button")
+                .role(Role::Button)
+                .on_click(move |_, _, _| {
+                    click_count.set(click_count.get() + 1);
+                })
+                .child("Activate")
+        }
+    }
+
+    #[gpui::test]
+    fn test_simulate_accessibility_action(cx: &mut TestAppContext) {
+        let click_count = Rc::new(Cell::new(0));
+        let window = cx.add_window(|_, _| AccessibleButton {
+            click_count: click_count.clone(),
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.activate_accessibility();
+        let node_id = visual
+            .accessibility_node_id("test.accessible-button")
+            .expect("accessible button node");
+
+        visual.simulate_accessibility_action(ActionRequest {
+            action: AccessibilityAction::Click,
+            target_tree: TreeId::ROOT,
+            target_node: node_id,
+            data: None,
+        });
+
+        assert_eq!(click_count.get(), 1);
+    }
 
     #[gpui::test]
     async fn test_system_notifications_require_identity_and_replace_matching_tags(

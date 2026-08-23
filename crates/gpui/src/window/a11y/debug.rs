@@ -161,6 +161,15 @@ impl A11yDebug {
         });
         Some(serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string()))
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn node_id_for_author_id(&self, author_id: &str) -> Option<NodeId> {
+        self.last_tree_update
+            .as_ref()?
+            .nodes
+            .iter()
+            .find_map(|(id, node)| (node.author_id() == Some(author_id)).then_some(*id))
+    }
 }
 
 #[derive(Default)]

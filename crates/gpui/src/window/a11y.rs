@@ -217,6 +217,17 @@ impl A11y {
         self.active_this_frame
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_active_for_test(&mut self, active: bool) {
+        self.active_flag.store(active, Ordering::SeqCst);
+        self.sync_active_flag();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn node_id_for_author_id(&self, author_id: &str) -> Option<NodeId> {
+        self.debug.node_id_for_author_id(author_id)
+    }
+
     pub(crate) fn set_focusable(&mut self, node_id: NodeId, focus_id: FocusId) {
         self.focus_ids.insert(node_id, focus_id);
     }
