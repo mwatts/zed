@@ -73,6 +73,36 @@ use crate::util::{
 };
 pub use prompts::*;
 
+/// What a backdrop blur paints: the frost, the lens over it, and its tint.
+///
+/// Used by [`Window::paint_backdrop_blur`]. Metal and wgpu apply these; other
+/// renderers ignore the primitive and callers keep their own fill.
+#[derive(Clone, Copy, Debug)]
+pub struct GlassEffect {
+    /// Gaussian sigma applied to the snapshot. Zero skips the blur entirely.
+    pub blur_radius: Pixels,
+    /// How deep the lens profile reaches in from the rim. Zero paints flat.
+    pub lens: Pixels,
+    /// The furthest the rim may drag the backdrop.
+    pub reach: Pixels,
+    /// Displacement amplitude; signed, so its sign picks the direction.
+    pub magnify: f32,
+    /// Per-channel spread of the displacement — the chromatic fringe.
+    pub dispersion: f32,
+    /// Slope of `out = gain * saturated(backdrop) + tint`.
+    pub gain: f32,
+    /// How far the backdrop's chroma is pushed from its own grey.
+    pub saturation: f32,
+    /// Its offset, added.
+    pub tint: Hsla,
+    /// How much white the lit rim adds, 0..1.
+    pub edge: f32,
+    /// How far in that light falls off to nothing.
+    pub edge_width: Pixels,
+    /// Width of the coverage ramp at the shape's boundary. Zero is a hard edge.
+    pub edge_aa: Pixels,
+}
+
 /// Default window size used when no explicit size is provided.
 pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
 
@@ -3917,6 +3947,36 @@ impl Window {
                 pad: 0,
             });
         }
+    }
+
+    /// Paint a within-window backdrop blur: everything already painted under
+    /// this order is sampled, gaussian-blurred, and drawn back inside the
+    /// rounded bounds (frosted-glass popovers).
+    ///
+    /// Metal and wgpu implement the capture; a renderer without it ignores the
+    /// call, so callers keep a fill of their own. Content painted AFTER this
+    /// call composites on top.
+    ///
+    /// On this pin the Metal/wgpu capture path is not yet wired — the call is
+    /// a documented no-op until that lands. Callers must still treat
+    /// [`GlassEffect`] as the Bezel glass recipe so the API stays stable.
+    pub fn paint_backdrop_blur(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        glass: GlassEffect,
+    ) {
+        self.invalidator.debug_assert_paint();
+        // Cap radii so a `rounded_full` pill cannot discard every fragment.
+        let limit = bounds.size.width.min(bounds.size.height) / 2.;
+        let _corner_radii = Corners {
+            top_left: corner_radii.top_left.min(limit),
+            top_right: corner_radii.top_right.min(limit),
+            bottom_right: corner_radii.bottom_right.min(limit),
+            bottom_left: corner_radii.bottom_left.min(limit),
+        };
+        let _ = (bounds, glass, self.scale_factor(), self.content_mask());
+        // Scene insertion + Metal/wgpu capture land in a follow-up on this pin.
     }
 
     /// Paint the inset shadows from `shadows` into the scene at the current z-index. Should
